@@ -5,14 +5,29 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:goanime/main.dart';
+import 'package:goanime/services/download_service.dart';
+import 'package:goanime/services/locale_service.dart';
 
 void main() {
-	testWidgets('renders GoAnime home screen', (tester) async {
-		await tester.pumpWidget(const MyApp());
+  testWidgets('sets the GoAnime app title', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => LocaleService()),
+          ChangeNotifierProvider.value(value: DownloadService()),
+        ],
+        child: const MyApp(),
+      ),
+    );
 
-		expect(find.text('GoAnime'), findsOneWidget);
-	});
+    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(app.title, 'GoAnime');
+  });
 }

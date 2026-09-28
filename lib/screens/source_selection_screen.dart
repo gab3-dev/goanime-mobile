@@ -3,7 +3,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../main.dart';
 import '../l10n/app_localizations.dart';
 import '../theme/app_colors.dart';
-import '../services/allanime_service.dart';
 import '../widgets/watchlist_button.dart';
 import 'episode_list_screen.dart';
 
@@ -27,12 +26,11 @@ class _SourceSelectionScreenState extends State<SourceSelectionScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
 
-  bool _isSearchingAllAnime = false;
-  bool _isSearchingAnimeFire = false;
-  List<AllAnimeShow> _allAnimeResults = [];
-  String? _allAnimeErrorMessage;
+  bool _isSearchingSources = false;
+  List<Anime> _aniDBResults = [];
   List<Anime> _animeFireResults = [];
-  String? _animeFireErrorMessage;
+  List<Anime> _goyabuResults = [];
+  String? _searchErrorMessage;
 
   @override
   void initState() {
@@ -42,8 +40,7 @@ class _SourceSelectionScreenState extends State<SourceSelectionScreen>
       duration: const Duration(milliseconds: 300),
     );
     _animationController.forward();
-    _searchAllAnime();
-    _searchAnimeFire();
+    _searchSources();
   }
 
   @override
@@ -52,185 +49,99 @@ class _SourceSelectionScreenState extends State<SourceSelectionScreen>
     super.dispose();
   }
 
-  Future<void> _searchAllAnime() async {
+  Future<void> _searchSources() async {
     setState(() {
-      _isSearchingAllAnime = true;
-      _allAnimeErrorMessage = null;
-    });
-
-    try {
-      final searchResponse = await AllAnimeService.searchAnime(
-        widget.animeTitle,
-      );
-
-      if (searchResponse != null && searchResponse.shows.isNotEmpty) {
-        setState(() {
-          _allAnimeResults = searchResponse.shows;
-          _isSearchingAllAnime = false;
-        });
-      } else {
-        if (!mounted) return;
-        final l10n = AppLocalizations.of(context);
-        setState(() {
-          _isSearchingAllAnime = false;
-          _allAnimeErrorMessage = l10n.animeNotFoundOnAllAnime;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error searching AllAnime: $e');
-      setState(() {
-        _isSearchingAllAnime = false;
-        _allAnimeErrorMessage = 'Error searching on AllAnime';
-      });
-    }
-  }
-
-  Future<void> _searchAnimeFire() async {
-    setState(() {
-      _isSearchingAnimeFire = true;
-      _animeFireErrorMessage = null;
+      _isSearchingSources = true;
+      _searchErrorMessage = null;
     });
 
     try {
       final results = await AnimeService.searchAnime(widget.animeTitle);
-      final animeFireResults = results
-          .where((a) => a.source == AnimeSource.animeFire)
-          .toList();
-
-      if (animeFireResults.isNotEmpty) {
-        setState(() {
-          _animeFireResults = animeFireResults;
-          _isSearchingAnimeFire = false;
-        });
-      } else {
-        if (!mounted) return;
-        final l10n = AppLocalizations.of(context);
-        setState(() {
-          _isSearchingAnimeFire = false;
-          _animeFireErrorMessage = l10n.animeNotFoundOnAnimeFire;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error searching AnimeFire: $e');
+      if (!mounted) return;
       setState(() {
-        _isSearchingAnimeFire = false;
-        _animeFireErrorMessage = 'Error searching on AnimeFire';
+        _aniDBResults = results
+            .where((anime) => anime.source == AnimeSource.aniDb)
+            .toList();
+        _animeFireResults = results
+            .where((anime) => anime.source == AnimeSource.animeFire)
+            .toList();
+        _goyabuResults = results
+            .where((anime) => anime.source == AnimeSource.goyabu)
+            .toList();
+        _isSearchingSources = false;
+      });
+    } catch (e) {
+      debugPrint('Error searching anime sources: $e');
+      if (!mounted) return;
+      setState(() {
+        _isSearchingSources = false;
+        _searchErrorMessage =
+            'Could not search anime sources. Check your connection and retry.';
       });
     }
   }
 
   Future<void> _selectSource(AnimeSource source) async {
-    if (source == AnimeSource.allAnime && _allAnimeResults.isNotEmpty) {
-      // Se houver múltiplos resultados, mostra dialog para escolher
-      if (_allAnimeResults.length > 1) {
-        final selectedShow = await _showVersionSelectionDialog(
-          source: source,
-          allAnimeShows: _allAnimeResults,
-        );
-        if (selectedShow == null) return; // User cancelled
+    final results = switch (source) {
+      AnimeSource.aniDb => _aniDBResults,
+      AnimeSource.animeFire => _animeFireResults,
+      AnimeSource.goyabu => _goyabuResults,
+    };
+    if (results.isEmpty) return;
 
-        final anime = Anime(
-          name: selectedShow.displayName,
-          url: widget.myAnimeListUrl,
-          fallbackImageUrl: widget.imageUrl,
-          source: AnimeSource.allAnime,
-          allAnimeId: selectedShow.id,
-        );
+    final selected = results.length == 1
+        ? results.first
+        : await _showVersionSelectionDialog(results);
+    if (selected == null || !mounted) return;
 
-        // Enrich with AniList data before navigating
-        await AnimeService.enrichAnimeWithAniList(anime);
-
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ModernEpisodeListScreen(anime: anime),
-          ),
-        );
-      } else {
-        // Apenas um resultado, usa diretamente
-        final show = _allAnimeResults.first;
-        final anime = Anime(
-          name: show.displayName,
-          url: widget.myAnimeListUrl,
-          fallbackImageUrl: widget.imageUrl,
-          source: AnimeSource.allAnime,
-          allAnimeId: show.id,
-        );
-
-        // Enrich with AniList data before navigating
-        await AnimeService.enrichAnimeWithAniList(anime);
-
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ModernEpisodeListScreen(anime: anime),
-          ),
-        );
-      }
-    } else if (source == AnimeSource.animeFire &&
-        _animeFireResults.isNotEmpty) {
-      // Se houver múltiplos resultados, mostra dialog para escolher
-      if (_animeFireResults.length > 1) {
-        final selectedAnime = await _showVersionSelectionDialog(
-          source: source,
-          animeFireAnimes: _animeFireResults,
-        );
-        if (selectedAnime == null) return; // User cancelled
-
-        // Enrich with AniList data before navigating
-        await AnimeService.enrichAnimeWithAniList(selectedAnime);
-
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ModernEpisodeListScreen(anime: selectedAnime),
-          ),
-        );
-      } else {
-        // Apenas um resultado, usa diretamente
-        final anime = _animeFireResults.first;
-
-        // Enrich with AniList data before navigating
-        await AnimeService.enrichAnimeWithAniList(anime);
-
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ModernEpisodeListScreen(anime: anime),
-          ),
-        );
-      }
-    } else {
-      // Fallback (não deveria acontecer)
-      final anime = Anime(
-        name: widget.animeTitle,
-        url: widget.myAnimeListUrl,
-        fallbackImageUrl: widget.imageUrl,
-        source: source,
-      );
-
-      // Enrich with AniList data before navigating
-      await AnimeService.enrichAnimeWithAniList(anime);
-
-      if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ModernEpisodeListScreen(anime: anime),
-        ),
-      );
-    }
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ModernEpisodeListScreen(anime: selected),
+      ),
+    );
   }
 
-  Future<dynamic> _showVersionSelectionDialog({
-    required AnimeSource source,
-    List<AllAnimeShow>? allAnimeShows,
-    List<Anime>? animeFireAnimes,
-  }) async {
+  void _openSourceWebsite(String sourceName, Uri uri) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) =>
+            SourceWebViewScreen(initialUrl: uri.toString(), title: sourceName),
+      ),
+    );
+  }
+
+  void _openAniDBWebsite() {
+    _openSourceWebsite(
+      'AniDB',
+      Uri.https('anidb.app', '/browse', {'q': widget.animeTitle}),
+    );
+  }
+
+  void _openAnimeFireWebsite() {
+    final query = widget.animeTitle.toLowerCase().trim().replaceAll(' ', '-');
+    _openSourceWebsite(
+      'AnimeFire',
+      Uri.https('animefire.io', '/pesquisar/$query'),
+    );
+  }
+
+  void _openGoyabuWebsite() {
+    _openSourceWebsite(
+      'Goyabu',
+      Uri.https('goyabu.io', '/', {'s': widget.animeTitle}),
+    );
+  }
+
+  void _openSuperFlixWebsite() {
+    _openSourceWebsite(
+      'SuperFlix',
+      Uri.https('superflixapi.monster', '/pesquisar', {'s': widget.animeTitle}),
+    );
+  }
+
+  Future<Anime?> _showVersionSelectionDialog(List<Anime> results) async {
     final l10n = AppLocalizations.of(context);
 
     return showDialog(
@@ -248,45 +159,26 @@ class _SourceSelectionScreenState extends State<SourceSelectionScreen>
             width: double.maxFinite,
             child: ListView.builder(
               shrinkWrap: true,
-              itemCount: source == AnimeSource.allAnime
-                  ? (allAnimeShows?.length ?? 0)
-                  : (animeFireAnimes?.length ?? 0),
+              itemCount: results.length,
               itemBuilder: (context, index) {
-                if (source == AnimeSource.allAnime && allAnimeShows != null) {
-                  final show = allAnimeShows[index];
-                  return ListTile(
-                    title: Text(
-                      show.displayName,
-                      style: const TextStyle(color: Colors.white),
+                final anime = results[index];
+                return ListTile(
+                  title: Text(
+                    anime.name,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  subtitle: Text(
+                    anime.sourceName,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.7),
                     ),
-                    subtitle: Text(
-                      '${show.episodeCount} episodes',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.7),
-                      ),
-                    ),
-                    trailing: const Icon(
-                      Icons.arrow_forward_ios,
-                      color: AppColors.primary,
-                    ),
-                    onTap: () => Navigator.pop(context, show),
-                  );
-                } else if (source == AnimeSource.animeFire &&
-                    animeFireAnimes != null) {
-                  final anime = animeFireAnimes[index];
-                  return ListTile(
-                    title: Text(
-                      anime.name,
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                    trailing: const Icon(
-                      Icons.arrow_forward_ios,
-                      color: AppColors.primary,
-                    ),
-                    onTap: () => Navigator.pop(context, anime),
-                  );
-                }
-                return const SizedBox.shrink();
+                  ),
+                  trailing: const Icon(
+                    Icons.arrow_forward_ios,
+                    color: AppColors.primary,
+                  ),
+                  onTap: () => Navigator.pop(context, anime),
+                );
               },
             ),
           ),
@@ -405,25 +297,23 @@ class _SourceSelectionScreenState extends State<SourceSelectionScreen>
                   ),
                   const SizedBox(height: 32),
 
-                  // Opção AllAnime
+                  // AniDB provides English and Japanese audio tracks.
                   _buildSourceCard(
-                    title: 'AllAnime',
-                    subtitle: _isSearchingAllAnime
+                    title: 'AniDB',
+                    subtitle: _isSearchingSources
                         ? l10n.searching
-                        : _allAnimeResults.isNotEmpty
-                        ? _allAnimeResults.length > 1
-                              ? 'Available • ${_allAnimeResults.length} versions found'
-                              : 'Available • Subtitled'
-                        : _allAnimeErrorMessage ?? 'Unavailable',
+                        : _aniDBResults.isNotEmpty
+                        ? 'Available • ${_aniDBResults.length} results • Japanese / English'
+                        : 'Browse AniDB directly',
                     icon: Icons.public,
                     gradient: const LinearGradient(
                       colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
                     ),
-                    available: _allAnimeResults.isNotEmpty,
-                    isLoading: _isSearchingAllAnime,
-                    onTap: _allAnimeResults.isNotEmpty
-                        ? () => _selectSource(AnimeSource.allAnime)
-                        : null,
+                    available: !_isSearchingSources,
+                    isLoading: _isSearchingSources,
+                    onTap: _aniDBResults.isNotEmpty
+                        ? () => _selectSource(AnimeSource.aniDb)
+                        : _openAniDBWebsite,
                   ),
 
                   const SizedBox(height: 16),
@@ -431,23 +321,75 @@ class _SourceSelectionScreenState extends State<SourceSelectionScreen>
                   // Opção AnimeFire
                   _buildSourceCard(
                     title: 'AnimeFire',
-                    subtitle: _isSearchingAnimeFire
+                    subtitle: _isSearchingSources
                         ? l10n.searching
                         : _animeFireResults.isNotEmpty
-                        ? _animeFireResults.length > 1
-                              ? 'Available • ${_animeFireResults.length} versions found'
-                              : 'Available • Dubbed/Subtitled'
-                        : _animeFireErrorMessage ?? 'Unavailable',
+                        ? 'Available • ${_animeFireResults.length} results • PT-BR'
+                        : 'Browse AnimeFire directly',
                     icon: Icons.local_fire_department,
                     gradient: const LinearGradient(
                       colors: [Color(0xFFFF6B35), Color(0xFFFF8E53)],
                     ),
-                    available: _animeFireResults.isNotEmpty,
-                    isLoading: _isSearchingAnimeFire,
+                    available: !_isSearchingSources,
+                    isLoading: _isSearchingSources,
                     onTap: _animeFireResults.isNotEmpty
                         ? () => _selectSource(AnimeSource.animeFire)
-                        : null,
+                        : _openAnimeFireWebsite,
                   ),
+
+                  const SizedBox(height: 16),
+
+                  _buildSourceCard(
+                    title: 'Goyabu',
+                    subtitle: _isSearchingSources
+                        ? l10n.searching
+                        : _goyabuResults.isNotEmpty
+                        ? 'Available • ${_goyabuResults.length} results • PT-BR'
+                        : 'Browse Goyabu directly',
+                    icon: Icons.public,
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF219C80), Color(0xFF50C878)],
+                    ),
+                    available: !_isSearchingSources,
+                    isLoading: _isSearchingSources,
+                    onTap: _goyabuResults.isNotEmpty
+                        ? () => _selectSource(AnimeSource.goyabu)
+                        : _openGoyabuWebsite,
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  _buildSourceCard(
+                    title: 'SuperFlix',
+                    subtitle: 'Movies / TV • open source player',
+                    icon: Icons.movie_outlined,
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF465A65), Color(0xFF82949D)],
+                    ),
+                    available: true,
+                    isLoading: false,
+                    onTap: _openSuperFlixWebsite,
+                  ),
+
+                  if (!_isSearchingSources &&
+                      _aniDBResults.isEmpty &&
+                      _animeFireResults.isEmpty &&
+                      _goyabuResults.isEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _searchErrorMessage ??
+                          'No source returned results. The source sites may be temporarily unavailable.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.65),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: _searchSources,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry source search'),
+                    ),
+                  ],
 
                   const SizedBox(height: 32),
 

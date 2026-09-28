@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import '../main.dart';
+import '../services/anidb_service.dart';
 import 'video_player_screen.dart';
 import '../theme/app_colors.dart';
 import '../widgets/download_button.dart';
@@ -120,13 +121,72 @@ class _ModernEpisodeListScreenState extends State<ModernEpisodeListScreen>
     }
   }
 
-  void _openEpisode(Episode episode) {
+  Future<void> _openEpisode(Episode episode) async {
     debugPrint(
       '[ModernEpisodeListScreen] Opening video - Anime: ${widget.anime.name}, '
       'Has aniListData: ${widget.anime.aniListData != null}, '
       'AniList ID: ${widget.anime.anilistId}, '
       'MAL ID: ${widget.anime.malId}',
     );
+
+    String? audioLanguageCode;
+    if (widget.anime.source == AnimeSource.aniDb) {
+      try {
+        final languages = await AniDBService.shared.getAvailableLanguages(
+          episode.url,
+        );
+        if (!mounted) return;
+        if (languages.isEmpty) {
+          throw const FormatException(
+            'No playable audio tracks were returned.',
+          );
+        }
+        if (languages.length == 1) {
+          audioLanguageCode = languages.single.code;
+        } else {
+          audioLanguageCode = await showModalBottomSheet<String>(
+            context: context,
+            backgroundColor: AppColors.surface,
+            builder: (context) => SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(20, 20, 20, 8),
+                    child: Text(
+                      'Choose audio language',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  for (final language in languages)
+                    ListTile(
+                      title: Text(
+                        language.name,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      onTap: () => Navigator.pop(context, language.code),
+                    ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            ),
+          );
+          if (audioLanguageCode == null) return;
+        }
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load audio options: $error')),
+        );
+      }
+    }
+
+    if (!mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -134,6 +194,7 @@ class _ModernEpisodeListScreenState extends State<ModernEpisodeListScreen>
           anime: widget.anime,
           episode: episode,
           animeTitle: widget.anime.name,
+          audioLanguageCode: audioLanguageCode,
         ),
       ),
     );
@@ -143,7 +204,7 @@ class _ModernEpisodeListScreenState extends State<ModernEpisodeListScreen>
     showDialog(
       context: context,
       builder: (context) => BatchDownloadDialog(
-        animeId: widget.anime.allAnimeId ?? widget.anime.url,
+        animeId: widget.anime.url,
         animeName: widget.anime.name,
         thumbnailUrl: widget.anime.imageUrl,
         episodes: _episodes.map((e) {
@@ -201,7 +262,9 @@ class _ModernEpisodeListScreenState extends State<ModernEpisodeListScreen>
       elevation: 0,
       actions: [
         // Batch download button
-        if (!_isLoading && _episodes.isNotEmpty)
+        if (!_isLoading &&
+            _episodes.isNotEmpty &&
+            widget.anime.source == AnimeSource.animeFire)
           IconButton(
             icon: const Icon(Icons.file_download, color: Colors.white),
             tooltip: 'Batch Download',
@@ -539,7 +602,7 @@ class _ModernEpisodeListScreenState extends State<ModernEpisodeListScreen>
               animeThumbnail: widget.anime.imageUrl,
               sourceName: widget.anime.sourceName,
               animeUrl: widget.anime.url,
-              allAnimeId: widget.anime.allAnimeId,
+              downloadsSupported: widget.anime.source == AnimeSource.animeFire,
             ),
           );
         }, childCount: _episodes.length),
@@ -625,6 +688,22 @@ class _ModernEpisodeListScreenState extends State<ModernEpisodeListScreen>
                 ),
               ),
             ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SourceWebViewScreen(
+                      initialUrl: widget.anime.url,
+                      title: widget.anime.sourceName,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.open_in_browser),
+              label: const Text('Open source website'),
+            ),
           ],
         ),
       ),
@@ -634,14 +713,34 @@ class _ModernEpisodeListScreenState extends State<ModernEpisodeListScreen>
   Widget _buildEmptyState() {
     return Container(
       padding: const EdgeInsets.all(48),
-      child: const Center(
+      child: Center(
         child: Column(
           children: [
-            Icon(Icons.video_library_outlined, size: 64, color: Colors.white24),
-            SizedBox(height: 16),
-            Text(
+            const Icon(
+              Icons.video_library_outlined,
+              size: 64,
+              color: Colors.white24,
+            ),
+            const SizedBox(height: 16),
+            const Text(
               'No episodes found',
               style: TextStyle(color: Colors.white70, fontSize: 18),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SourceWebViewScreen(
+                      initialUrl: widget.anime.url,
+                      title: widget.anime.sourceName,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.open_in_browser),
+              label: const Text('Open source website'),
             ),
           ],
         ),
@@ -659,7 +758,7 @@ class _EpisodeListCard extends StatelessWidget {
   final String animeThumbnail;
   final String sourceName;
   final String animeUrl;
-  final String? allAnimeId;
+  final bool downloadsSupported;
 
   const _EpisodeListCard({
     required this.episode,
@@ -669,7 +768,7 @@ class _EpisodeListCard extends StatelessWidget {
     required this.animeThumbnail,
     required this.sourceName,
     required this.animeUrl,
-    this.allAnimeId,
+    required this.downloadsSupported,
   });
 
   @override
@@ -892,20 +991,19 @@ class _EpisodeListCard extends StatelessWidget {
             ),
 
             // Download Button
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: DownloadButton(
-                animeId:
-                    allAnimeId ??
-                    animeUrl, // Use AllAnime ID if available, otherwise URL
-                animeName: animeTitle,
-                episodeNumber: _getEpisodeNumber(episode.number, index),
-                episodeTitle: _getEpisodeLabel(episode.number, index),
-                videoUrl: episode.url,
-                thumbnailUrl: thumbnailUrl ?? '',
-                quality: DownloadQuality.auto,
+            if (downloadsSupported)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: DownloadButton(
+                  animeId: animeUrl,
+                  animeName: animeTitle,
+                  episodeNumber: _getEpisodeNumber(episode.number, index),
+                  episodeTitle: _getEpisodeLabel(episode.number, index),
+                  videoUrl: episode.url,
+                  thumbnailUrl: thumbnailUrl ?? '',
+                  quality: DownloadQuality.auto,
+                ),
               ),
-            ),
           ],
         ),
       ),

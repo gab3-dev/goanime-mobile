@@ -7,7 +7,8 @@ import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import '../main.dart';
 import '../google_video_proxy.dart';
-import '../services/allanime_service.dart';
+import '../services/anidb_service.dart';
+import '../services/goyabu_service.dart';
 import '../services/aniskip_service.dart';
 import '../models/aniskip_models.dart';
 import '../widgets/skip_button.dart';
@@ -39,12 +40,14 @@ class ModernVideoPlayerScreen extends StatefulWidget {
   final Episode episode;
   final String animeTitle;
   final Anime? anime;
+  final String? audioLanguageCode;
 
   const ModernVideoPlayerScreen({
     super.key,
     required this.episode,
     required this.animeTitle,
     this.anime,
+    this.audioLanguageCode,
   });
 
   @override
@@ -93,8 +96,8 @@ class _ModernVideoPlayerScreenState extends State<ModernVideoPlayerScreen> {
       final identifiers = <String?>[
         anime.anilistId?.toString(),
         anime.malId?.toString(),
-        anime.allAnimeId,
         anime.url,
+        target.audioLanguageCode,
       ];
 
       final extraIdentifier = identifiers.firstWhere(
@@ -638,29 +641,43 @@ class _ModernVideoPlayerScreenState extends State<ModernVideoPlayerScreen> {
       }
 
       String videoSrc;
+      var providerHeaders = <String, String>{};
+      VideoStreamResult? resolvedGoyabuStream;
+      final source = widget.anime?.source ?? AnimeSource.animeFire;
 
-      if (widget.anime?.source == AnimeSource.allAnime) {
-        debugPrint('[VideoPlayer] Getting AllAnime episode URL');
-
-        final animeId = widget.anime!.allAnimeId ?? widget.anime!.url;
-        final episodeNo = widget.episode.url;
-
-        final allAnimeUrl = await AllAnimeService.getEpisodeURL(
-          animeId,
-          episodeNo,
+      if (source == AnimeSource.aniDb) {
+        debugPrint('[VideoPlayer] Resolving AniDB stream');
+        final stream = await AniDBService.shared.getEpisodeStreamUrl(
+          widget.episode.url,
+          languageCode: widget.audioLanguageCode ?? 'jpn',
         );
-
-        if (!_isActiveEpisode(episodeKey)) {
-          debugPrint('[VideoPlayer] AllAnime fetch ignored (episode changed).');
-          return;
+        videoSrc = stream.url;
+        providerHeaders = stream.headers;
+      } else if (source == AnimeSource.goyabu) {
+        debugPrint('[VideoPlayer] Resolving Goyabu stream');
+        final stream = await GoyabuService.shared.getEpisodeStreamUrl(
+          widget.episode.url,
+        );
+        videoSrc = stream.url;
+        providerHeaders = stream.headers;
+        if (stream.isDirectMedia) {
+          resolvedGoyabuStream = VideoStreamResult(
+            url: stream.url,
+            headers: stream.headers,
+            isGoogleVideo:
+                stream.url.contains('googlevideo.com') ||
+                stream.url.contains('videoplayback'),
+          );
+        } else if (stream.url.contains('blogger.com')) {
+          resolvedGoyabuStream = await AnimeService.extractActualVideoURL(
+            stream.url,
+            referer: '${GoyabuService.baseUrl}/',
+          );
+        } else {
+          throw const FormatException(
+            'Goyabu returned an embedded player instead of a direct stream.',
+          );
         }
-
-        if (allAnimeUrl == null || allAnimeUrl.isEmpty) {
-          throw Exception('Video URL not found on AllAnime');
-        }
-
-        videoSrc = allAnimeUrl;
-        debugPrint('[VideoPlayer] AllAnime video URL: $videoSrc');
       } else {
         debugPrint('[VideoPlayer] Getting AnimeFire episode URL');
         videoSrc = await AnimeService.extractVideoURL(widget.episode.url);
@@ -682,16 +699,15 @@ class _ModernVideoPlayerScreenState extends State<ModernVideoPlayerScreen> {
       String resolvedVideoUrl;
       Map<String, String> controllerHeaders;
 
-      if (widget.anime?.source == AnimeSource.allAnime) {
-        debugPrint('[VideoPlayer] Using AllAnime URL directly for streaming');
+      if (source == AnimeSource.aniDb) {
+        debugPrint('[VideoPlayer] Using AniDB HLS URL directly for streaming');
         resolvedVideoUrl = videoSrc;
-        controllerHeaders = {
-          HttpHeaders.userAgentHeader:
-              'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36',
-        };
+        controllerHeaders = providerHeaders;
         _isGoogleStream = false;
       } else {
-        final actualVideo = await AnimeService.extractActualVideoURL(videoSrc);
+        final actualVideo =
+            resolvedGoyabuStream ??
+            await AnimeService.extractActualVideoURL(videoSrc);
         if (actualVideo.url.isEmpty) {
           throw Exception('Video URL could not be extracted from API');
         }
@@ -707,7 +723,9 @@ class _ModernVideoPlayerScreenState extends State<ModernVideoPlayerScreen> {
         final playbackHeaders = <String, String>{
           HttpHeaders.userAgentHeader:
               'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36',
-          HttpHeaders.refererHeader: 'https://animefire.plus/',
+          HttpHeaders.refererHeader: source == AnimeSource.goyabu
+              ? '${GoyabuService.baseUrl}/'
+              : '${AnimeService.baseSiteUrl}/',
         };
 
         if (actualVideo.hasHeaders) {
@@ -800,6 +818,7 @@ class _ModernVideoPlayerScreenState extends State<ModernVideoPlayerScreen> {
         setState(() {
           _isLoading = false;
           _errorMessage = e.toString();
+          _showWebViewOption = widget.anime != null;
         });
       }
     }
@@ -819,9 +838,11 @@ class _ModernVideoPlayerScreenState extends State<ModernVideoPlayerScreen> {
           if (isBloggerError) {
             _errorMessage =
                 'Compatibility error detected. Try using the alternative web player.';
-            _showWebViewOption = _isIOS && _bloggerVideoUrl != null;
+            _showWebViewOption =
+                widget.anime != null || (_isIOS && _bloggerVideoUrl != null);
           } else {
             _errorMessage = 'Player error: $error';
+            _showWebViewOption = widget.anime != null;
           }
           _isLoading = false;
         });
@@ -831,13 +852,21 @@ class _ModernVideoPlayerScreenState extends State<ModernVideoPlayerScreen> {
 
   bool get _isIOS => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
+  bool get _hasWebViewFallback =>
+      widget.anime != null || _bloggerVideoUrl != null;
+
   void _openWebViewFallback() {
-    final fallbackUrl = _bloggerVideoUrl ?? _currentVideoUrl;
+    final fallbackUrl =
+        widget.anime?.source == AnimeSource.aniDb ||
+            widget.anime?.source == AnimeSource.goyabu
+        ? widget.episode.url
+        : _bloggerVideoUrl ??
+              (widget.anime != null ? widget.episode.url : _currentVideoUrl);
     if (fallbackUrl == null) return;
 
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => BloggerWebViewScreen(
+        builder: (_) => SourceWebViewScreen(
           initialUrl: fallbackUrl,
           title: '${widget.animeTitle} - Ep ${widget.episode.number}',
         ),
@@ -933,7 +962,7 @@ class _ModernVideoPlayerScreenState extends State<ModernVideoPlayerScreen> {
             ),
           ),
           const SizedBox(height: 24),
-          if (_showWebViewOption && _bloggerVideoUrl != null) ...[
+          if (_showWebViewOption && _hasWebViewFallback) ...[
             ElevatedButton.icon(
               onPressed: _openWebViewFallback,
               icon: const Icon(Icons.open_in_browser),
@@ -1323,7 +1352,7 @@ class _ModernVideoPlayerScreenState extends State<ModernVideoPlayerScreen> {
                 ],
               ),
 
-              if (_showWebViewOption && _bloggerVideoUrl != null) ...[
+              if (_showWebViewOption && _hasWebViewFallback) ...[
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
