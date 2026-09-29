@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../main.dart';
@@ -102,7 +104,15 @@ class _SourceSelectionScreenState extends State<SourceSelectionScreen>
     );
   }
 
-  void _openSourceWebsite(String sourceName, Uri uri) {
+  void _openSourceWebsite(
+    String sourceName,
+    Uri uri, {
+    bool openInSystemBrowser = false,
+  }) {
+    if (openInSystemBrowser) {
+      unawaited(openSourceInSystemBrowser(context, uri.toString()));
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -131,6 +141,7 @@ class _SourceSelectionScreenState extends State<SourceSelectionScreen>
     _openSourceWebsite(
       'Goyabu',
       Uri.https('goyabu.io', '/', {'s': widget.animeTitle}),
+      openInSystemBrowser: true,
     );
   }
 

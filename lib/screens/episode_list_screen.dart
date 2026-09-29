@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
@@ -691,6 +693,12 @@ class _ModernEpisodeListScreenState extends State<ModernEpisodeListScreen>
             const SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: () {
+                if (widget.anime.source == AnimeSource.goyabu) {
+                  unawaited(
+                    openSourceInSystemBrowser(context, widget.anime.url),
+                  );
+                  return;
+                }
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -729,6 +737,12 @@ class _ModernEpisodeListScreenState extends State<ModernEpisodeListScreen>
             const SizedBox(height: 16),
             OutlinedButton.icon(
               onPressed: () {
+                if (widget.anime.source == AnimeSource.goyabu) {
+                  unawaited(
+                    openSourceInSystemBrowser(context, widget.anime.url),
+                  );
+                  return;
+                }
                 Navigator.push(
                   context,
                   MaterialPageRoute(

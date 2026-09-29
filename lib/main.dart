@@ -12,6 +12,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'models/anilist_models.dart';
 import 'services/anilist_service.dart';
@@ -45,6 +46,33 @@ void main() async {
       child: const MyApp(),
     ),
   );
+}
+
+Future<void> openSourceInSystemBrowser(
+  BuildContext context,
+  String rawUrl,
+) async {
+  final uri = Uri.tryParse(rawUrl);
+  if (uri == null || (uri.scheme != 'https' && uri.scheme != 'http')) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Invalid source website address.')),
+    );
+    return;
+  }
+
+  var opened = false;
+  try {
+    opened = await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+  } catch (error) {
+    debugPrint('Failed to open source browser: $error');
+  }
+  if (!opened && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Could not open the source in your browser.'),
+      ),
+    );
+  }
 }
 
 // Logo Widget Helper
@@ -3042,11 +3070,6 @@ class _SourceWebViewScreenState extends State<SourceWebViewScreen> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.black)
-      ..setUserAgent(
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) '
-        'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 '
-        'Mobile/15E148 Safari/604.1',
-      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (int progress) {

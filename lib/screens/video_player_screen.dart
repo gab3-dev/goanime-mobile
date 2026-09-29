@@ -864,6 +864,11 @@ class _ModernVideoPlayerScreenState extends State<ModernVideoPlayerScreen> {
               (widget.anime != null ? widget.episode.url : _currentVideoUrl);
     if (fallbackUrl == null) return;
 
+    if (widget.anime?.source == AnimeSource.goyabu) {
+      unawaited(openSourceInSystemBrowser(context, fallbackUrl));
+      return;
+    }
+
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => SourceWebViewScreen(
